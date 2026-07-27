@@ -7,8 +7,10 @@ use App\Models\Coupon;
 use App\Models\Ticket;
 use App\Models\Transaction;
 use App\Models\TransactionItem;
+use App\Mail\EventTicketMail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use RuntimeException;
 
 class TicketingService
@@ -130,13 +132,13 @@ class TicketingService
      */
     public function fulfill(Transaction $transaction): void
     {
-        DB::transaction(function () use ($transaction) {
+        $wasFulfilled = DB::transaction(function () use ($transaction) {
             $transaction = Transaction::where('id', $transaction->id)->lockForUpdate()->first();
 
             if ($transaction->stock_applied) {
                 Log::info("Transaksi {$transaction->order_id} sudah diproses, dilewati.");
 
-                return;
+                return false;
             }
 
             foreach ($transaction->transactionItems as $item) {
@@ -161,7 +163,23 @@ class TicketingService
                 'stock_applied' => true,
                 'expires_at'    => null,
             ])->save();
+
+            return true;
         });
+
+        // Kirim hanya setelah transaksi database berhasil di-commit. Webhook atau
+        // sinkronisasi yang berulang tidak akan mengirim duplikat karena di atas
+        // sudah berhenti ketika stock_applied bernilai true.
+        if ($wasFulfilled) {
+            try {
+                $transaction->refresh()->loadMissing('event');
+                Mail::to($transaction->customer_email)->send(new EventTicketMail($transaction));
+                Log::info("Email E-Ticket terkirim untuk {$transaction->order_id}");
+            } catch (\Throwable $e) {
+                // Pembayaran dan tiket tetap valid bila SMTP sedang tidak tersedia.
+                Log::error("Gagal mengirim email E-Ticket untuk {$transaction->order_id}: {$e->getMessage()}");
+            }
+        }
     }
 
     /**

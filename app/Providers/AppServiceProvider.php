@@ -20,12 +20,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        $mode = config('midtrans.mode', 'sandbox');
-
         Config::$serverKey = config('midtrans.server_key');
         Config::$clientKey = config('midtrans.client_key');
         Config::$isSanitized = true;
         Config::$is3ds = true;
-        Config::$isProduction = $mode === 'production';
+        // Gunakan satu sumber konfigurasi yang sama dengan controller checkout.
+        // Jangan menentukan mode dari key `midtrans.mode` yang tidak tersedia.
+        Config::$isProduction = (bool) config('midtrans.is_production');
     }
 }
